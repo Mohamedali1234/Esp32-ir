@@ -5,29 +5,27 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:   # lets you trigger a build manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
-    steps:
+    permissions:
+      contents: write
 
-      # ── 1. Checkout code ──────────────────────────────────
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Set up Python (needed by PlatformIO) ───────────
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # ── 3. Install PlatformIO ─────────────────────────────
       - name: Install PlatformIO
         run: pip install platformio
 
-      # ── 4. Cache PlatformIO packages (speeds up builds) ───
       - name: Cache PlatformIO
         uses: actions/cache@v4
         with:
@@ -35,33 +33,27 @@ jobs:
           key: pio-${{ hashFiles('platformio.ini') }}
           restore-keys: pio-
 
-      # ── 5. Compile firmware ───────────────────────────────
       - name: Build firmware
         run: pio run
 
-      # ── 6. Build SPIFFS filesystem image (web UI) ─────────
-      - name: Build SPIFFS image
+      - name: Build LittleFS image (web UI)
         run: pio run --target buildfs
 
-      # ── 7. Rename outputs to friendly names ───────────────
-      - name: Rename binaries
+      - name: Package binaries
         run: |
           mkdir -p artifacts
-          cp .pio/build/esp32dev/firmware.bin   artifacts/esp32_ir_remote_firmware.bin
-          cp .pio/build/esp32dev/spiffs.bin     artifacts/esp32_ir_remote_spiffs.bin
+          cp .pio/build/esp32dev/firmware.bin      artifacts/esp32_ir_remote_firmware.bin
+          cp .pio/build/esp32dev/littlefs.bin      artifacts/esp32_ir_remote_webui.bin
           echo "── Build complete ──"
           ls -lh artifacts/
 
-      # ── 8. Upload both .bin files as downloadable artifacts
-      - name: Upload firmware artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ESP32-IR-Remote-${{ github.sha }}
+          name: ESP32-IR-Remote-${{ github.run_number }}
           path: artifacts/
           retention-days: 30
 
-      # ── 9. (Optional) Auto-create a GitHub Release on push to main
-      #       with both .bin files attached — comment out if not wanted
       - name: Create Release
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
@@ -69,36 +61,27 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: "Build #${{ github.run_number }}"
           body: |
-            ## ESP32 IR Remote — Automated Build
+            ## ESP32 IR Remote + Dazzler — Build #${{ github.run_number }}
 
             ### Files
-            | File | Description |
-            |------|-------------|
-            | `esp32_ir_remote_firmware.bin` | Main firmware — flash at 0x10000 |
-            | `esp32_ir_remote_spiffs.bin`   | Web UI filesystem — flash at 0x290000 |
+            | File | Flash Address | Description |
+            |------|--------------|-------------|
+            | `esp32_ir_remote_firmware.bin` | `0x10000` | Main firmware |
+            | `esp32_ir_remote_webui.bin` | `0x290000` | Web UI (LittleFS) |
 
-            ### How to flash
-            **esptool.py (command line):**
+            ### Flash with esptool
             ```bash
-            # Flash firmware
-            esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x10000 esp32_ir_remote_firmware.bin
-
-            # Flash web UI
-            esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x290000 esp32_ir_remote_spiffs.bin
+            esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x10000  esp32_ir_remote_firmware.bin
+            esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x290000 esp32_ir_remote_webui.bin
             ```
-
-            **ESP Flash Download Tool (Windows GUI):**
-            - firmware.bin  → 0x10000
-            - spiffs.bin    → 0x290000
-
-            **Replace `COM3` with your actual port (Linux: `/dev/ttyUSB0`, Mac: `/dev/cu.usbserial-*`)**
+            > Replace `COM3` with your port (`/dev/ttyUSB0` on Linux, `/dev/cu.usbserial-*` on Mac)
 
             ### First boot
-            - Connect to WiFi: `IR Remote`
-            - Password: `IRREMOTE123`
-            - Open browser: `http://192.168.4.1`
+            - WiFi: **IR Remote** / Password: **IRREMOTE123**
+            - Open: **http://192.168.4.1**
           files: artifacts/*
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
