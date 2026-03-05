@@ -1,0 +1,104 @@
+name: Build ESP32 IR Remote
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:   # lets you trigger a build manually from the Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── 1. Checkout code ──────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python (needed by PlatformIO) ───────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── 3. Install PlatformIO ─────────────────────────────
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # ── 4. Cache PlatformIO packages (speeds up builds) ───
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-
+
+      # ── 5. Compile firmware ───────────────────────────────
+      - name: Build firmware
+        run: pio run
+
+      # ── 6. Build SPIFFS filesystem image (web UI) ─────────
+      - name: Build SPIFFS image
+        run: pio run --target buildfs
+
+      # ── 7. Rename outputs to friendly names ───────────────
+      - name: Rename binaries
+        run: |
+          mkdir -p artifacts
+          cp .pio/build/esp32dev/firmware.bin   artifacts/esp32_ir_remote_firmware.bin
+          cp .pio/build/esp32dev/spiffs.bin     artifacts/esp32_ir_remote_spiffs.bin
+          echo "── Build complete ──"
+          ls -lh artifacts/
+
+      # ── 8. Upload both .bin files as downloadable artifacts
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESP32-IR-Remote-${{ github.sha }}
+          path: artifacts/
+          retention-days: 30
+
+      # ── 9. (Optional) Auto-create a GitHub Release on push to main
+      #       with both .bin files attached — comment out if not wanted
+      - name: Create Release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build #${{ github.run_number }}"
+          body: |
+            ## ESP32 IR Remote — Automated Build
+
+            ### Files
+            | File | Description |
+            |------|-------------|
+            | `esp32_ir_remote_firmware.bin` | Main firmware — flash at 0x10000 |
+            | `esp32_ir_remote_spiffs.bin`   | Web UI filesystem — flash at 0x290000 |
+
+            ### How to flash
+            **esptool.py (command line):**
+            ```bash
+            # Flash firmware
+            esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x10000 esp32_ir_remote_firmware.bin
+
+            # Flash web UI
+            esptool.py --chip esp32 --port COM3 --baud 921600 write_flash 0x290000 esp32_ir_remote_spiffs.bin
+            ```
+
+            **ESP Flash Download Tool (Windows GUI):**
+            - firmware.bin  → 0x10000
+            - spiffs.bin    → 0x290000
+
+            **Replace `COM3` with your actual port (Linux: `/dev/ttyUSB0`, Mac: `/dev/cu.usbserial-*`)**
+
+            ### First boot
+            - Connect to WiFi: `IR Remote`
+            - Password: `IRREMOTE123`
+            - Open browser: `http://192.168.4.1`
+          files: artifacts/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
