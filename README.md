@@ -4,55 +4,6 @@ WiFi IR remote control system for generic ESP32 with web UI, IR learning, and IR
 
 ---
 
-## ⚡ Get the .bin files (no coding needed)
-
-### Step 1 — Create a GitHub repo
-
-1. Go to [github.com](https://github.com) → sign in or create a free account
-2. Click **+** → **New repository**
-3. Name it `esp32-ir-remote`, set it to **Public**, click **Create repository**
-
-### Step 2 — Upload the project files
-
-Drag and drop ALL these files into the repo (maintain folder structure):
-
-```
-esp32_ir_unified.ino
-platformio.ini
-data/
-  index.html
-.github/
-  workflows/
-    build.yml
-```
-
-Or use Git:
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/YOURUSERNAME/esp32-ir-remote.git
-git push -u origin main
-```
-
-### Step 3 — Download your .bin files
-
-1. Go to your repo on GitHub
-2. Click the **Actions** tab
-3. Click the latest **Build ESP32 IR Remote** run
-4. Wait ~3 minutes for it to finish (green checkmark ✓)
-5. Either:
-   - Scroll down to **Artifacts** → click **ESP32-IR-Remote-xxxxx** to download a zip
-   - OR click the **Releases** tab on the repo main page → download files directly
-
-You get two files:
-| File | What it is |
-|------|-----------|
-| `esp32_ir_remote_firmware.bin` | The main firmware |
-| `esp32_ir_remote_spiffs.bin` | The web UI |
-
----
-
 ## 🔌 Flash to ESP32
 
 ### Option A — ESP Flash Download Tool (Windows, easiest GUI)
