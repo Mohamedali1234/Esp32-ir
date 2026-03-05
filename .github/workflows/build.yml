@@ -36,7 +36,7 @@ jobs:
       - name: Build firmware
         run: pio run
 
-      - name: Build LittleFS image (web UI)
+      - name: Build SPIFFS image (web UI)
         run: pio run --target buildfs
 
       - name: List build output (debug)
@@ -47,8 +47,8 @@ jobs:
           mkdir -p artifacts
           cp .pio/build/esp32dev/firmware.bin artifacts/esp32_ir_remote_firmware.bin
           # copy whichever filesystem image was produced
-          if [ -f .pio/build/esp32dev/littlefs.bin ]; then
-            cp .pio/build/esp32dev/littlefs.bin artifacts/esp32_ir_remote_webui.bin
+          if [ -f .pio/build/esp32dev/spiffs.bin ]; then
+            cp .pio/build/esp32dev/spiffs.bin artifacts/esp32_ir_remote_webui.bin
           elif [ -f .pio/build/esp32dev/spiffs.bin ]; then
             cp .pio/build/esp32dev/spiffs.bin artifacts/esp32_ir_remote_webui.bin
           else
@@ -96,4 +96,3 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
