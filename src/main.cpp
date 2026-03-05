@@ -41,7 +41,7 @@
 #include <IRsend.h>
 #include <IRrecv.h>
 #include <IRutils.h>
-#include <LittleFS.h>          // LittleFS replaces deprecated SPIFFS
+#include <SPIFFS.h>          // filesystem for web UI
 #include <Preferences.h>
 #include <freertos/semphr.h>   // mutex for IR/Dazzler safety
 
@@ -475,12 +475,12 @@ void handleLearnedCode(decode_results* r) {
 // ══════════════════════════════════════════════════════════
 void setupRoutes() {
 
-  // ── Static UI (LittleFS) ───────────────────────────────
+  // ── Static UI (SPIFFS) ───────────────────────────────
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (LittleFS.exists("/index.html"))
-      req->send(LittleFS, "/index.html", "text/html");
+    if (SPIFFS.exists("/index.html"))
+      req->send(SPIFFS, "/index.html", "text/html");
     else
-      req->send(200, "text/html", "<h2>Upload index.html to LittleFS</h2>");
+      req->send(200, "text/html", "<h2>Upload index.html to SPIFFS</h2>");
   });
 
   // ── Remotes ────────────────────────────────────────────
@@ -489,81 +489,6 @@ void setupRoutes() {
   });
 
   server.on("/api/remote", HTTP_GET, [](AsyncWebServerRequest* req) {
-    if (!req->hasParam("name")) { req->send(400, "application/json", "{\"error\":\"missing name\"}"); return; }
-    req->send(200, "application/json", readRemote(req->getParam("name")->value()));
-  });
-
-  server.on("/api/send", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      StaticJsonDocument<512> doc;
-      if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
-      String remote   = doc["remote"]   | "";
-      String button   = doc["button"]   | "";
-      String protocol = doc["protocol"] | "";
-      uint64_t code   = doc["code"].as<uint64_t>();
-      uint16_t bits   = doc["bits"]   | 32;
-      uint16_t repeat = doc["repeat"] | 0;
-      if (protocol.isEmpty() || code == 0) {
-        DynamicJsonDocument rdoc(8192);
-        if (!deserializeJson(rdoc, readRemote(remote)))
-          for (JsonObject btn : rdoc["buttons"].as<JsonArray>())
-            if (String(btn["name"].as<const char*>()) == button) {
-              protocol = btn["protocol"].as<String>();
-              code     = btn["code"].as<uint64_t>();
-              bits     = btn["bits"]   | 32;
-              repeat   = btn["repeat"] | 0;
-              break;
-            }
-      }
-      sendIRCode(protocol, code, bits, repeat)
-        ? req->send(200, "application/json", "{\"ok\":true}")
-        : req->send(500, "application/json", "{\"error\":\"send failed\"}");
-    });
-
-  server.on("/api/learn/start", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      if (dz.active) { req->send(409, "application/json", "{\"error\":\"Stop dazzler first\"}"); return; }
-      StaticJsonDocument<256> doc;
-      if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
-      learnRemote  = doc["remote"] | "unnamed";
-      learnButton  = doc["button"] | "button";
-      isLearning   = true;
-      learnTimeout = millis() + LEARN_TIMEOUT_MS;
-      if (irReceiver) irReceiver->enableIRIn();
-      wsSerial.printf("[Learn] Waiting for %s / %s\n", learnRemote.c_str(), learnButton.c_str());
-      req->send(200, "application/json", "{\"ok\":true,\"timeout\":15}");
-    });
-
-  server.on("/api/learn/status", HTTP_GET, [](AsyncWebServerRequest* req) {
-    StaticJsonDocument<128> doc;
-    doc["learning"] = isLearning;
-    doc["remote"]   = learnRemote;
-    doc["button"]   = learnButton;
-    String out; serializeJson(doc, out); req->send(200, "application/json", out);
-  });
-
-  server.on("/api/learn/cancel", HTTP_POST, [](AsyncWebServerRequest* req) {
-    isLearning = false;
-    if (irReceiver) irReceiver->disableIRIn();
-    req->send(200, "application/json", "{\"ok\":true}");
-  });
-
-  server.on("/api/remote/create", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      StaticJsonDocument<256> doc;
-      if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
-      String name = doc["name"] | "";
-      if (name.isEmpty()) { req->send(400, "application/json", "{\"error\":\"name required\"}"); return; }
-      StaticJsonDocument<256> r;
-      r["name"] = name; r["icon"] = doc["icon"] | "📺";
-      r.createNestedArray("buttons");
-      String json; serializeJson(r, json);
-      writeRemote(name, json)
-        ? req->send(200, "application/json", "{\"ok\":true}")
-        : req->send(500, "application/json", "{\"error\":\"write failed — SD card?\"}");
-    });
-
-  server.on("/api/remote/delete", HTTP_DELETE, [](AsyncWebServerRequest* req) {
     if (!req->hasParam("name")) { req->send(400, "application/json", "{\"error\":\"missing name\"}"); return; }
     req->send(200, "application/json", readRemote(req->getParam("name")->value()));
   });
@@ -820,11 +745,11 @@ void setup() {
   // SD card
   initSD();
 
-  // LittleFS for web UI (replaces deprecated SPIFFS)
-  if (!LittleFS.begin(true)) {
-    Serial.println("[FS] LittleFS mount failed — web UI unavailable");
+  // SPIFFS for web UI
+  if (!SPIFFS.begin(true)) {
+    Serial.println("[FS] SPIFFS mount failed — web UI unavailable");
   } else {
-    Serial.println("[FS] LittleFS OK");
+    Serial.println("[FS] SPIFFS OK");
   }
 
   // WiFi AP
@@ -868,4 +793,3 @@ void loop() {
   // Small yield to keep WiFi stack happy
   delay(1);
 }
-    
