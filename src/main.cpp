@@ -426,7 +426,7 @@ void setupRoutes() {
   });
 
   server.on("/api/send", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
       StaticJsonDocument<512> doc;
       if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
       String remote = doc["remote"]|"", button = doc["button"]|"", protocol = doc["protocol"]|"";
@@ -447,7 +447,7 @@ void setupRoutes() {
     });
 
   server.on("/api/learn/start", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
       StaticJsonDocument<256> doc;
       if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
       learnRemote = doc["remote"]|"unnamed"; learnButton = doc["button"]|"button";
@@ -469,7 +469,7 @@ void setupRoutes() {
   });
 
   server.on("/api/remote/create", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
       StaticJsonDocument<256> doc;
       if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
       String name = doc["name"]|"";
@@ -488,7 +488,7 @@ void setupRoutes() {
   });
 
   server.on("/api/button/delete", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
       StaticJsonDocument<256> doc;
       if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
       String remote = doc["remote"]|"", button = doc["button"]|"";
@@ -504,14 +504,184 @@ void setupRoutes() {
 
   // ── Dazzler routes ─────────────────────────────────────
   server.on("/api/dazzler/start", HTTP_POST, [](AsyncWebServerRequest* req) {},
-    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t, size_t) {
+    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
       StaticJsonDocument<256> doc;
       if (!deserializeJson(doc, data, len)) {
-        dz.freqHz    = doc["freq"]    |38000;
-        dz.dutyCycle = doc["duty"]    |50;
-        dz.pattern   = doc["pattern"].as<String>(); if (dz.pattern.isEmpty()) dz.pattern="steady";
-        dz.strobeMs  = doc["strobeMs"]|100;
-        dz.burstOnMs = doc["burstOn"] |50;
-        dz.burstOffMs= doc["burstOff"]|200;
-        uint32_t secs= doc["timer"]   |0;
-        dz.stopAt    = s
+        dz.freqHz     = doc["freq"]    | 38000;
+        dz.dutyCycle  = doc["duty"]    | 50;
+        dz.pattern    = doc["pattern"].as<String>();
+        if (dz.pattern.isEmpty()) dz.pattern = "steady";
+        dz.strobeMs   = doc["strobeMs"] | 100;
+        dz.burstOnMs  = doc["burstOn"]  | 50;
+        dz.burstOffMs = doc["burstOff"] | 200;
+        uint32_t timerSecs = doc["timer"] | 0;
+        dz.stopAt = timerSecs > 0 ? millis() + timerSecs * 1000 : 0;
+      }
+      dz.active = true; dz.strobePhase = true; dz.lastStrobe = millis();
+      if (dz.pattern == "steady") dazzlerOn();
+      wsSerial.printf("[Dazzler] START freq=%uHz duty=%u%% pattern=%s\n",
+        dz.freqHz, dz.dutyCycle, dz.pattern.c_str());
+      req->send(200, "application/json", "{\"ok\":true}");
+    });
+
+  server.on("/api/dazzler/stop", HTTP_POST, [](AsyncWebServerRequest* req) {
+    dz.active=false; dazzlerOff();
+    wsSerial.println("[Dazzler] STOP");
+    req->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/api/dazzler/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+    StaticJsonDocument<256> doc;
+    doc["active"]=dz.active; doc["freq"]=dz.freqHz; doc["duty"]=dz.dutyCycle;
+    doc["pattern"]=dz.pattern; doc["strobeMs"]=dz.strobeMs;
+    doc["burstOn"]=dz.burstOnMs; doc["burstOff"]=dz.burstOffMs;
+    int32_t rem = (dz.stopAt>0&&dz.active) ? (int32_t)(dz.stopAt-millis())/1000 : -1;
+    doc["remaining"] = rem;
+    String out; serializeJson(doc, out); req->send(200, "application/json", out);
+  });
+
+  // ── GPIO / Settings routes ─────────────────────────────
+  server.on("/api/pins", HTTP_GET, [](AsyncWebServerRequest* req) {
+    StaticJsonDocument<256> doc;
+    doc["irTx"]=pins.irTx; doc["irRx"]=pins.irRx;
+    doc["sdCs"]=pins.sdCs; doc["sdMosi"]=pins.sdMosi;
+    doc["sdMiso"]=pins.sdMiso; doc["sdSck"]=pins.sdSck;
+    String out; serializeJson(doc, out); req->send(200, "application/json", out);
+  });
+
+  server.on("/api/pins", HTTP_POST, [](AsyncWebServerRequest* req) {},
+    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+      StaticJsonDocument<256> doc;
+      if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
+      pins.irTx   = doc["irTx"]  |pins.irTx;
+      pins.irRx   = doc["irRx"]  |pins.irRx;
+      pins.sdCs   = doc["sdCs"]  |pins.sdCs;
+      pins.sdMosi = doc["sdMosi"]|pins.sdMosi;
+      pins.sdMiso = doc["sdMiso"]|pins.sdMiso;
+      pins.sdSck  = doc["sdSck"] |pins.sdSck;
+      savePins();
+      // collect any warnings to send back
+      String warns = "";
+      struct { uint8_t p; bool out; const char* n; } chk[] = {
+        {pins.irTx,true,"IR TX"},{pins.irRx,false,"IR RX"},{pins.sdCs,true,"SD CS"},
+        {pins.sdMosi,true,"SD MOSI"},{pins.sdMiso,false,"SD MISO"},{pins.sdSck,true,"SD SCK"}
+      };
+      for (auto& c : chk) { String w=gpioWarning(c.p,c.out); if(w.length()) warns += String(c.n)+" GPIO"+c.p+": "+w+"\n"; }
+      wsSerial.printf("[Pins] Saved. TX=%d RX=%d CS=%d MOSI=%d MISO=%d SCK=%d\n",
+        pins.irTx,pins.irRx,pins.sdCs,pins.sdMosi,pins.sdMiso,pins.sdSck);
+      if (warns.length()) wsSerial.println("[Pins] Warnings:\n" + warns);
+      StaticJsonDocument<512> resp;
+      resp["ok"]=true; resp["reboot"]=true;
+      if (warns.length()) resp["warnings"]=warns;
+      String rOut; serializeJson(resp,rOut);
+      req->send(200, "application/json", rOut);
+    });
+
+  server.on("/api/reboot", HTTP_POST, [](AsyncWebServerRequest* req) {
+    req->send(200, "application/json", "{\"ok\":true}");
+    delay(500); ESP.restart();
+  });
+
+  // ── Status ─────────────────────────────────────────────
+  server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+    StaticJsonDocument<256> doc;
+    doc["sd"]        = sdAvailable;
+    doc["learning"]  = isLearning;
+    doc["dazzling"]  = dz.active;
+    doc["ip"]        = AP_IP.toString();
+    doc["ssid"]      = apSsid;
+    doc["heap"]      = ESP.getFreeHeap();
+    doc["uptime"]    = millis() / 1000;
+    String out; serializeJson(doc, out); req->send(200, "application/json", out);
+  });
+
+  // ── AP Config routes ───────────────────────────────────
+  server.on("/api/apconfig", HTTP_GET, [](AsyncWebServerRequest* req) {
+    StaticJsonDocument<128> doc;
+    doc["ssid"] = apSsid;
+    doc["pass"] = apPass;
+    String out; serializeJson(doc, out); req->send(200, "application/json", out);
+  });
+
+  server.on("/api/apconfig", HTTP_POST, [](AsyncWebServerRequest* req) {},
+    nullptr, [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+      StaticJsonDocument<256> doc;
+      if (deserializeJson(doc, data, len)) { req->send(400, "application/json", "{\"error\":\"bad json\"}"); return; }
+      String newSsid = doc["ssid"] | "";
+      String newPass = doc["pass"] | "";
+      if (newSsid.length() == 0 || newSsid.length() > 32) {
+        req->send(400, "application/json", "{\"error\":\"SSID must be 1–32 characters\"}"); return;
+      }
+      if (newPass.length() < 8 || newPass.length() > 63) {
+        req->send(400, "application/json", "{\"error\":\"Password must be 8–63 characters\"}"); return;
+      }
+      apSsid = newSsid; apPass = newPass;
+      saveAPConfig();
+      wsSerial.printf("[WiFi] AP config saved: '%s' — reboot to apply\n", apSsid.c_str());
+      req->send(200, "application/json", "{\"ok\":true,\"reboot\":true}");
+    });
+
+  server.onNotFound([](AsyncWebServerRequest* req) { req->send(404, "text/plain", "Not found"); });
+
+  // WebSocket
+  wsLog.onEvent(onWsEvent);
+  server.addHandler(&wsLog);
+}
+
+// ══════════════════════════════════════════════════════════
+//  SETUP
+// ══════════════════════════════════════════════════════════
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+
+  loadPins();
+  loadAPConfig();
+  wsSerial.println("\n[ESP32 IR+Dazzler] Starting...");
+  wsSerial.printf("[Pins] TX=%d RX=%d SDCS=%d MOSI=%d MISO=%d SCK=%d\n",
+    pins.irTx, pins.irRx, pins.sdCs, pins.sdMosi, pins.sdMiso, pins.sdSck);
+  validatePins();
+
+  // IR objects (created with loaded pin config)
+  irsend = new IRsend(pins.irTx);
+  irrecv = new IRrecv(pins.irRx);
+  irsend->begin();
+  wsSerial.println("[IR] Ready");
+
+  // SD
+  initSD();
+
+  // SPIFFS
+  if (!SPIFFS.begin(true)) wsSerial.println("[SPIFFS] Failed");
+
+  // WiFi AP
+  WiFi.softAPConfig(AP_IP, AP_IP, IPAddress(255,255,255,0));
+  WiFi.softAP(apSsid.c_str(), apPass.c_str());
+  wsSerial.printf("[WiFi] AP '%s'  IP %s\n", apSsid.c_str(), AP_IP.toString().c_str());
+
+  setupRoutes();
+  server.begin();
+  wsSerial.println("[HTTP] Server started — http://192.168.4.1");
+}
+
+// ══════════════════════════════════════════════════════════
+//  LOOP
+// ══════════════════════════════════════════════════════════
+void loop() {
+  // IR learning
+  if (isLearning) {
+    if (millis() > learnTimeout) {
+      wsSerial.println("[Learn] Timeout"); isLearning = false;
+      if (irrecv) irrecv->disableIRIn();
+    } else if (irrecv && irrecv->decode(&irResults)) {
+      if (irResults.value != kRepeat && irResults.decode_type != UNKNOWN)
+        handleLearnedCode(&irResults);
+      else
+        irrecv->resume();
+    }
+  }
+  // Dazzler patterns
+  dazzlerLoop();
+  // WS cleanup
+  wsLog.cleanupClients();
+}
