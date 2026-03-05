@@ -39,12 +39,24 @@ jobs:
       - name: Build LittleFS image (web UI)
         run: pio run --target buildfs
 
+      - name: List build output (debug)
+        run: find .pio/build/esp32dev/ -name "*.bin" -o -name "*.elf" | sort
+
       - name: Package binaries
         run: |
           mkdir -p artifacts
-          cp .pio/build/esp32dev/firmware.bin      artifacts/esp32_ir_remote_firmware.bin
-          cp .pio/build/esp32dev/littlefs.bin      artifacts/esp32_ir_remote_webui.bin
-          echo "── Build complete ──"
+          cp .pio/build/esp32dev/firmware.bin artifacts/esp32_ir_remote_firmware.bin
+          # copy whichever filesystem image was produced
+          if [ -f .pio/build/esp32dev/littlefs.bin ]; then
+            cp .pio/build/esp32dev/littlefs.bin artifacts/esp32_ir_remote_webui.bin
+          elif [ -f .pio/build/esp32dev/spiffs.bin ]; then
+            cp .pio/build/esp32dev/spiffs.bin artifacts/esp32_ir_remote_webui.bin
+          else
+            echo "ERROR: No filesystem image found!"
+            find .pio/ -name "*.bin" | sort
+            exit 1
+          fi
+          echo "── Artifacts ──"
           ls -lh artifacts/
 
       - name: Upload artifacts
